@@ -15,14 +15,14 @@ namespace CorreosVelsat.Worker
         public static void ValidateConfiguration(IConfiguration config)
         {
             if (config.GetValue("Worker:Enabled", false) && string.IsNullOrWhiteSpace(config.GetConnectionString("MySql")))
-                throw new InvalidOperationException("Falta ConnectionStrings:MySql en appsettings.json.");
+                throw new InvalidOperationException("Falta ConnectionStrings__MySql (ConnectionStrings:MySql) en variables de entorno o appsettings.json.");
         }
 
         protected override async Task ExecuteAsync(CancellationToken stoppingToken)
         {
             if (!config.GetValue("Worker:Enabled", false))
             {
-                logger.LogInformation("Worker de la cola de correos deshabilitado. Para activarlo: Worker:Enabled=true en appsettings.json.");
+                logger.LogInformation("Worker de la cola de correos deshabilitado. Para activarlo: Worker__Enabled=true (o Worker:Enabled en appsettings.json).");
                 return;
             }
 

@@ -4,6 +4,7 @@ appsettings.*.json
 !appsettings.example.json
 .env
 .env.*
+!.env.example
 
 # Build
 bin/

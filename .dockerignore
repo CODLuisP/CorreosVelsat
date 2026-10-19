@@ -1,0 +1,23 @@
+# Compilación y herramientas
+**/bin/
+**/obj/
+**/.vs/
+**/node_modules/
+**/TestResults/
+**/*.user
+.git
+.gitignore
+.claude/
+
+# Credenciales: la configuración del contenedor llega por variables de entorno (.env)
+.env
+.env.*
+**/appsettings.json
+**/appsettings.*.json
+
+# No se necesitan en la imagen
+correos-velsat.Tests/
+*.md
+Dockerfile
+docker-compose.yml
+.dockerignore

@@ -35,11 +35,14 @@ namespace CorreosVelsat.Email
             string accountId = Required("Cloudflare:AccountId");
             string apiToken = Required("Cloudflare:ApiToken");
             if (missing.Count > 0)
-                throw new InvalidOperationException($"Faltan valores obligatorios en appsettings.json: {string.Join(", ", missing)}");
+                throw new InvalidOperationException(
+                    $"Faltan valores obligatorios (variables de entorno o appsettings.json): {string.Join(", ", missing.Select(ConfigInt.EnvName))}");
 
-            // "AllowedFromDomains": ["velsat.pe", "otro.pe"]  (también acepta "velsat.pe,otro.pe")
+            // appsettings.json: "AllowedFromDomains": ["velsat.pe", "otro.pe"]
+            // variable de entorno: Email__AllowedFromDomains=velsat.pe,otro.pe
             var domainsSection = config.GetSection("Email:AllowedFromDomains");
-            var allowedDomains = (domainsSection.Get<string[]>() ?? (domainsSection.Value ?? "velsat.pe").Split(','))
+            var domainsArray = domainsSection.GetChildren().Select(c => c.Value ?? "").ToArray();
+            var allowedDomains = (domainsArray.Length > 0 ? domainsArray : (domainsSection.Value ?? "velsat.pe").Split(','))
                 .Select(d => d.Trim().ToLowerInvariant())
                 .Where(d => d.Length > 0)
                 .Distinct()
@@ -81,7 +84,7 @@ namespace CorreosVelsat.Email
         {
             string apiKey = config["Api:ApiKey"]?.Trim() ?? "";
             if (apiKey.Length == 0)
-                throw new InvalidOperationException("Falta el valor obligatorio en appsettings.json: Api:ApiKey");
+                throw new InvalidOperationException($"Falta el valor obligatorio (variable de entorno o appsettings.json): {ConfigInt.EnvName("Api:ApiKey")}");
             if (apiKey.Length < MinApiKeyLength)
                 throw new InvalidOperationException($"Api:ApiKey debe tener al menos {MinApiKeyLength} caracteres.");
 
@@ -96,6 +99,9 @@ namespace CorreosVelsat.Email
 
     internal static class ConfigInt
     {
+        /// <summary>"Cloudflare:ApiToken" → "Cloudflare__ApiToken (Cloudflare:ApiToken)".</summary>
+        public static string EnvName(string key) => $"{key.Replace(":", "__")} ({key})";
+
         public static int Read(IConfiguration config, string key, int defaultValue, int min, int max)
         {
             var raw = config[key]?.Trim();

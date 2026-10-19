@@ -19,6 +19,7 @@ namespace CorreosVelsat.Tests
         public int RateLimitPerMinute { get; init; } = 1000;
         public string Environment { get; init; } = "Testing";
         public bool SwaggerEnabled { get; init; } = true;
+        public string? PathBase { get; init; }
 
         protected override void ConfigureWebHost(IWebHostBuilder builder)
         {
@@ -33,6 +34,7 @@ namespace CorreosVelsat.Tests
                 ["Api:RateLimitPerMinute"] = RateLimitPerMinute.ToString(),
                 ["Worker:Enabled"] = "false",
                 ["Api:SwaggerEnabled"] = SwaggerEnabled.ToString(),
+                ["PathBase"] = PathBase,
             }));
             builder.ConfigureServices(services =>
             {

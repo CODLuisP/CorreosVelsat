@@ -15,8 +15,15 @@ namespace CorreosVelsat.Api
         {
             services.AddOpenApi(options =>
             {
-                options.AddDocumentTransformer((document, _, _) =>
+                options.AddDocumentTransformer((document, context, _) =>
                 {
+                    // Servidor relativo: "Try it out" llama a la misma URL desde donde se abrió Swagger,
+                    // con el prefijo de PathBase (p. ej. /correos) si el servicio está detrás de nginx.
+                    string pathBase = context.ApplicationServices.GetRequiredService<IConfiguration>()["PathBase"]?.Trim().TrimEnd('/') ?? "";
+                    if (pathBase.Length > 0 && !pathBase.StartsWith('/'))
+                        pathBase = "/" + pathBase;
+                    document.Servers = [new OpenApiServer { Url = pathBase.Length > 0 ? pathBase : "/" }];
+
                     document.Info = new OpenApiInfo
                     {
                         Title = "Correos Velsat API",
@@ -25,7 +32,7 @@ namespace CorreosVelsat.Api
                             API de envío de correos de Velsat sobre **Cloudflare Email Sending** (HTTPS, sin SMTP).
 
                             **Autenticación:** los endpoints de `/api/email` requieren el header `X-API-Key`.
-                            En Swagger UI pulsa **Authorize** y pega la clave (`Api:ApiKey` de appsettings.json).
+                            En Swagger UI pulsa **Authorize** y pega la clave (`Api__ApiKey` / `Api:ApiKey`).
 
                             **Rate limit:** `Api:RateLimitPerMinute` por IP y `Api:RateLimitPerDay` en total. Al superarlo se responde 429 con `Retry-After`.
                             """,
@@ -38,7 +45,7 @@ namespace CorreosVelsat.Api
                         Type = SecuritySchemeType.ApiKey,
                         In = ParameterLocation.Header,
                         Name = ApiKeyEndpointFilter.HeaderName,
-                        Description = "Clave definida en Api:ApiKey (appsettings.json).",
+                        Description = "Clave definida en Api__ApiKey (variable de entorno) o Api:ApiKey (appsettings.json).",
                     };
                     return Task.CompletedTask;
                 });
@@ -82,13 +89,14 @@ namespace CorreosVelsat.Api
             app.MapOpenApi();
             app.UseSwaggerUI(options =>
             {
-                options.SwaggerEndpoint("/openapi/v1.json", "Correos Velsat API v1");
+                // Ruta relativa a /swagger/index.html para que funcione también bajo un prefijo (/correos/swagger/).
+                options.SwaggerEndpoint("../openapi/v1.json", "Correos Velsat API v1");
                 options.RoutePrefix = "swagger";
                 options.DocumentTitle = "Correos Velsat API";
                 options.DisplayRequestDuration();
                 options.EnableTryItOutByDefault();
             });
-            app.MapGet("/", () => Results.Redirect("/swagger")).ExcludeFromDescription();
+            app.MapGet("/", (HttpRequest request) => Results.Redirect($"{request.PathBase}/swagger")).ExcludeFromDescription();
             return app;
         }
     }

@@ -83,6 +83,12 @@ catch (InvalidOperationException ex)
 if (isSendTest)
     return await SendTestCommand.RunAsync(app.Services, args[1..]);
 
+// Detrás de nginx bajo un prefijo (p. ej. https://do.velsat.pe:8443/correos/): con PathBase=/correos
+// las rutas responden tanto con prefijo (/correos/health) como sin él (/health, usado por el HEALTHCHECK).
+if (app.Configuration["PathBase"]?.Trim().TrimEnd('/') is { Length: > 0 } pathBase)
+    app.UsePathBase(pathBase.StartsWith('/') ? pathBase : "/" + pathBase);
+app.UseRouting();
+
 app.UseRateLimiter();
 app.MapApiDocumentation();
 app.MapGet("/health", () => Results.Ok(new { status = "ok" }))

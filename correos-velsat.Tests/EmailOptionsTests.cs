@@ -47,13 +47,26 @@ namespace CorreosVelsat.Tests
         }
 
         [Fact]
+        public void AllowedFromDomains_AcceptsCommaSeparatedValue_FromEnvironmentVariable()
+        {
+            var options = EmailOptions.FromConfiguration(Config(new()
+            {
+                ["Cloudflare:AccountId"] = "acc",
+                ["Cloudflare:ApiToken"] = "tok",
+                ["Email:AllowedFromDomains"] = "velsat.pe, otro.pe",
+            }));
+
+            Assert.Equal(["velsat.pe", "otro.pe"], options.AllowedFromDomains);
+        }
+
+        [Fact]
         public void MissingCloudflareValues_FailWithClearMessage()
         {
             var ex = Assert.Throws<InvalidOperationException>(() => EmailOptions.FromConfiguration(Config(new())));
 
             Assert.Contains("Cloudflare:AccountId", ex.Message);
             Assert.Contains("Cloudflare:ApiToken", ex.Message);
-            Assert.Contains("appsettings.json", ex.Message);
+            Assert.Contains("Cloudflare__ApiToken", ex.Message);
         }
 
         [Fact]

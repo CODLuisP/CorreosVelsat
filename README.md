@@ -7,39 +7,96 @@ Servicio en .NET 10 (ASP.NET Core) que:
 
 Todo el envío pasa por `IEmailService` (`CloudflareEmailService`), que usa la **API REST de Cloudflare Email Sending** por HTTPS. No usa SMTP: en el droplet de DigitalOcean los puertos 25, 465 y 587 están bloqueados.
 
-## Configuración (`appsettings.json`)
+## Configuración
 
-Toda la configuración vive en **`correos-velsat/appsettings.json`**, que **no se sube a git** porque tiene secretos. La plantilla está en [`correos-velsat/appsettings.example.json`](correos-velsat/appsettings.example.json): cópiala como `appsettings.json` y completa los valores.
+La misma configuración se puede dar de dos formas:
 
-| Sección : clave | Obligatoria | Default | Descripción |
+- **Docker / servidor:** variables de entorno en un archivo `.env` junto a `docker-compose.yml`. La plantilla es [`.env.example`](.env.example).
+- **Desarrollo local:** `correos-velsat/appsettings.json`, con la plantilla [`correos-velsat/appsettings.example.json`](correos-velsat/appsettings.example.json).
+
+Ninguno de los dos se sube a git. Si existen ambos, la variable de entorno gana. La variable `Seccion__Clave` equivale a `"Seccion": { "Clave": ... }`.
+
+| Variable de entorno | Obligatoria | Default | Descripción |
 |---|---|---|---|
-| `ConnectionStrings:MySql` | si el worker está activo | | Conexión a la base de la cola |
-| `Cloudflare:AccountId` | sí | | ID de la cuenta de Cloudflare |
-| `Cloudflare:ApiToken` | sí | | Token con permiso *Email Sending: Edit* |
-| `Email:DefaultFrom` | | `alertas@velsat.pe` | Remitente por defecto (alertas de la cola) |
-| `Email:DefaultFromName` | | `Velsat Alertas` | Nombre del remitente por defecto |
-| `Email:AllowedFromDomains` | | `["velsat.pe"]` | Dominios permitidos en `from` |
-| `Email:TimeoutMs` | | `15000` | Timeout por intento |
-| `Email:MaxRetries` | | `3` | Reintentos solo para 429, 5xx, timeouts y errores de red |
-| `Api:ApiKey` | sí | | Clave del header `X-API-Key` (mínimo 24 caracteres) |
-| `Api:RateLimitPerMinute` | | `30` | Solicitudes por minuto por IP al endpoint |
-| `Api:RateLimitPerDay` | | `2000` | Tope diario global del endpoint |
-| `Api:SwaggerEnabled` | | `false` | Publica Swagger UI fuera de Development |
-| `Worker:Enabled` | | `false` | `true` activa el envío automático de `cola_correos`. Actívalo solo cuando el MailWorker anterior esté detenido, para no duplicar envíos |
-| `Worker:IntervalSeconds` | | `60` | Cada cuánto se revisa la cola |
-| `Worker:BatchSize` | | `10` | Correos por lote |
-| `Worker:MaxRetries` | | `5` | Intentos máximos por correo de la cola |
+| `ConnectionStrings__MySql` | si el worker está activo | | Conexión a la base de la cola |
+| `Cloudflare__AccountId` | sí | | ID de la cuenta de Cloudflare |
+| `Cloudflare__ApiToken` | sí | | Token con permiso *Email Sending: Edit* |
+| `Email__DefaultFrom` | | `alertas@velsat.pe` | Remitente por defecto (alertas de la cola) |
+| `Email__DefaultFromName` | | `Velsat Alertas` | Nombre del remitente por defecto |
+| `Email__AllowedFromDomains` | | `velsat.pe` | Dominios permitidos en `from`, separados por comas |
+| `Email__TimeoutMs` | | `15000` | Timeout por intento |
+| `Email__MaxRetries` | | `3` | Reintentos solo para 429, 5xx, timeouts y errores de red |
+| `Api__ApiKey` | sí | | Clave del header `X-API-Key` (mínimo 24 caracteres) |
+| `Api__RateLimitPerMinute` | | `30` | Solicitudes por minuto por IP al endpoint |
+| `Api__RateLimitPerDay` | | `2000` | Tope diario global del endpoint |
+| `Api__SwaggerEnabled` | | `false` | Publica Swagger UI fuera de Development |
+| `Worker__Enabled` | | `false` | `true` activa el envío automático de `cola_correos`. Actívalo solo cuando el MailWorker anterior esté detenido, para no duplicar envíos |
+| `Worker__IntervalSeconds` | | `60` | Cada cuánto se revisa la cola |
+| `Worker__BatchSize` | | `10` | Correos por lote |
+| `Worker__MaxRetries` | | `5` | Intentos máximos por correo de la cola |
+| `PathBase` | | | Prefijo de ruta detrás de nginx, por ejemplo `/correos` |
 
 Si falta un valor obligatorio, el proceso no arranca y dice cuál falta.
 
-Cualquier clave también se puede sobrescribir con una variable de entorno usando `__` en lugar de `:` (por ejemplo `Worker__Enabled=true`), aunque no es necesario.
+## Despliegue con Docker
 
-### En el servidor Linux
+El contenedor escucha en `0.0.0.0:8080`. Docker Compose lo publica **solo en loopback** como `127.0.0.1:3009`, y nginx del host lo expone en `https://do.velsat.pe:8443/correos/`. No necesita volúmenes: no guarda archivos y los logs van a stdout, con un límite de 3 × 10 MB.
 
-1. Publica con `dotnet publish correos-velsat -c Release -o publish`. El `appsettings.json` local **no se incluye** en la publicación, para no pisar el del servidor.
-2. En la carpeta del servidor (por ejemplo `/opt/correos-velsat`), crea **una sola vez** `appsettings.json` a partir de la plantilla, con las claves de producción.
-3. En el servicio de systemd define `WorkingDirectory=/opt/correos-velsat`, porque el `appsettings.json` se busca en el directorio de trabajo. Arranca con `ExecStart=/usr/bin/dotnet /opt/correos-velsat/correos-velsat.dll`.
-4. Para que escuche detrás de nginx, agrega `Environment=ASPNETCORE_URLS=http://127.0.0.1:8080`.
+### Primera vez
+
+```bash
+git clone https://github.com/CODLuisP/CorreosVelsat.git correos-velsat
+cd correos-velsat
+cp .env.example .env
+nano .env                      # completar token, API key, MySQL...
+docker compose up -d --build
+docker compose ps              # debe pasar a (healthy)
+curl http://127.0.0.1:3009/health
+```
+
+### Actualizar
+
+```bash
+cd correos-velsat
+git pull
+docker compose up -d --build
+docker image prune -f          # borra las imágenes viejas sin uso
+```
+
+### Logs y operación
+
+```bash
+docker compose logs -f --tail 100     # logs en vivo
+docker compose restart                # reiniciar (p. ej. después de editar .env)
+docker compose down                   # detener y eliminar el contenedor
+```
+
+Después de editar `.env`, aplica los cambios con `docker compose up -d`, que recrea el contenedor. `restart` no vuelve a leer `.env`.
+
+### nginx (host)
+
+Dentro del bloque `server` que escucha en 8443 para `do.velsat.pe`:
+
+```nginx
+location /correos/ {
+    proxy_pass http://127.0.0.1:3009;   # SIN barra final: conserva /correos/ (la app usa PathBase=/correos)
+    proxy_set_header Host $host;
+    proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
+    proxy_set_header X-Forwarded-Proto $scheme;
+    client_max_body_size 12m;           # el default de nginx (1 MB) rechazaría correos grandes con 413
+    proxy_read_timeout 120s;            # un envío con reintentos puede tardar más de 60 s
+}
+```
+
+Prueba: `curl https://do.velsat.pe:8443/correos/health`.
+
+### Activar el envío automático de la cola
+
+1. Detén el MailWorker anterior del servidor Windows.
+2. En `.env` pon `Worker__Enabled=true`.
+3. Ejecuta `docker compose up -d`.
+
+Mantén **una sola instancia**: dos workers sobre la misma tabla pueden duplicar correos.
 
 ## Uso desde el código
 
@@ -72,8 +129,8 @@ public class AlertasService(IEmailService email)
 | `/openapi/v1.json` | Documento OpenAPI 3.1, importable en Postman o Insomnia |
 
 - **En desarrollo:** `dotnet run --project correos-velsat` usa el perfil Development y abre `http://localhost:5000/swagger`.
-- **En producción:** está apagado por defecto. Se activa con `"Api": { "SwaggerEnabled": true }`.
-- **Para probar el envío desde Swagger:** pulsa **Authorize** y pega el valor de `Api:ApiKey`.
+- **En producción:** está apagado por defecto. Se activa con `Api__SwaggerEnabled=true` y queda en `https://do.velsat.pe:8443/correos/swagger`.
+- **Para probar el envío desde Swagger:** pulsa **Authorize** y pega el valor de `Api__ApiKey`.
 
 ## Endpoint
 
@@ -111,7 +168,7 @@ Respuestas:
 dotnet test
 ```
 
-Para enviar un correo real con la configuración de `appsettings.json`:
+Para enviar un correo real con la configuración local (`appsettings.json`):
 
 ```bash
 cd correos-velsat

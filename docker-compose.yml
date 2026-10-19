@@ -1,0 +1,19 @@
+services:
+  correos-velsat:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    image: correos-velsat:latest
+    container_name: correos-velsat
+    restart: unless-stopped
+    env_file: .env
+    environment:
+      TZ: America/Lima
+    # Solo loopback: nginx del host es el único que debe alcanzarlo (Docker se salta ufw con 0.0.0.0).
+    ports:
+      - "127.0.0.1:3009:8080"
+    logging:
+      driver: json-file
+      options:
+        max-size: "10m"
+        max-file: "3"
