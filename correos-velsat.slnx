@@ -1,0 +1,4 @@
+<Solution>
+  <Project Path="correos-velsat/correos-velsat.csproj" />
+  <Project Path="correos-velsat.Tests/correos-velsat.Tests.csproj" />
+</Solution>

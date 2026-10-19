@@ -1,0 +1,15 @@
+# Secretos: cada entorno tiene su propio appsettings.json (plantilla: appsettings.example.json)
+appsettings.json
+appsettings.*.json
+!appsettings.example.json
+.env
+.env.*
+
+# Build
+bin/
+obj/
+TestResults/
+
+# Visual Studio
+.vs/
+*.user

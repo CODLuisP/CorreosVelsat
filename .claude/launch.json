@@ -1,0 +1,11 @@
+{
+  "version": "0.0.1",
+  "configurations": [
+    {
+      "name": "correos-velsat",
+      "runtimeExecutable": "dotnet",
+      "runtimeArgs": ["run", "--project", "correos-velsat"],
+      "port": 5000
+    }
+  ]
+}
