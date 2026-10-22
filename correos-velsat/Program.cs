@@ -13,14 +13,49 @@ var builder = WebApplication.CreateBuilder(isSendTest ? [] : args);
 // Las opciones se resuelven desde DI (no antes de Build) para que incluyan toda la configuración final.
 builder.Services.AddSingleton(sp => EmailOptions.FromConfiguration(sp.GetRequiredService<IConfiguration>()));
 builder.Services.AddSingleton(sp => EmailEndpointOptions.FromConfiguration(sp.GetRequiredService<IConfiguration>()));
+builder.Services.AddSingleton(sp => SmtpOptions.FromConfiguration(sp.GetRequiredService<IConfiguration>()));
+builder.Services.AddSingleton(TimeProvider.System);
 
-// Un único HttpClient para todo el proceso (connection pooling).
-builder.Services.AddSingleton<IEmailService>(sp => new CloudflareEmailService(
+// Proveedores. Un único HttpClient para todo el proceso (connection pooling).
+builder.Services.AddSingleton(sp => new CloudflareEmailService(
     CloudflareEmailService.CreateHttpClient(),
     sp.GetRequiredService<EmailOptions>(),
     sp.GetRequiredService<ILogger<CloudflareEmailService>>()));
+builder.Services.AddSingleton(sp => new SmtpEmailService(
+    sp.GetRequiredService<SmtpOptions>(),
+    sp.GetRequiredService<EmailOptions>(),
+    sp.GetRequiredService<ILogger<SmtpEmailService>>()));
+
+// Contador diario por proveedor: en MySQL (sobrevive a reinicios) o en memoria si no hay conexión configurada.
+builder.Services.AddSingleton<IEmailUsageStore>(sp =>
+    sp.GetRequiredService<IConfiguration>().GetConnectionString("MySql") is { Length: > 0 } cs
+        ? new MySqlEmailUsageStore(cs)
+        : new InMemoryEmailUsageStore());
+
+// Todo el backend envía por IEmailService = rotación Cloudflare → Brevo por cupo diario.
+builder.Services.AddSingleton(sp =>
+{
+    var email = sp.GetRequiredService<EmailOptions>();
+    var smtp = sp.GetRequiredService<SmtpOptions>();
+    var providers = new List<ProviderLimit> { new(sp.GetRequiredService<CloudflareEmailService>(), email.CloudflareDailyLimit) };
+    if (smtp.Enabled)
+        providers.Add(new(sp.GetRequiredService<SmtpEmailService>(), smtp.DailyLimit));
+    return new RoutingEmailService(
+        providers,
+        sp.GetRequiredService<IEmailUsageStore>(),
+        email,
+        sp.GetRequiredService<TimeProvider>(),
+        sp.GetRequiredService<ILogger<RoutingEmailService>>());
+});
+builder.Services.AddSingleton<IEmailService>(sp => sp.GetRequiredService<RoutingEmailService>());
 
 builder.Services.AddHostedService<MailQueueWorker>();
+builder.Services.AddHostedService(sp => new SmtpKeepAliveService(
+    sp.GetRequiredService<SmtpOptions>(),
+    sp.GetRequiredService<SmtpEmailService>(),
+    sp.GetRequiredService<IEmailUsageStore>(),
+    sp.GetRequiredService<TimeProvider>(),
+    sp.GetRequiredService<ILogger<SmtpKeepAliveService>>()));
 
 // Respuestas JSON con tildes legibles ("inválida" en vez de "inválida").
 builder.Services.ConfigureHttpJsonOptions(o =>
@@ -68,6 +103,13 @@ var app = builder.Build();
 try
 {
     _ = app.Services.GetRequiredService<EmailOptions>();
+    _ = app.Services.GetRequiredService<SmtpOptions>();
+    var routing = app.Services.GetRequiredService<RoutingEmailService>();
+    var usageStore = app.Services.GetRequiredService<IEmailUsageStore>();
+    var startupLog = app.Services.GetRequiredService<ILoggerFactory>().CreateLogger("CorreosVelsat");
+    startupLog.LogInformation("Proveedores de correo (en orden): {Proveedores}. Contador diario en {Almacen}.",
+        string.Join(", ", routing.Providers.Select(p => $"{p.Provider.Name} ({p.DailyLimit}/día)")),
+        usageStore.IsPersistent ? "MySQL (email_provider_usage)" : "memoria (se pierde al reiniciar)");
     if (!isSendTest)
     {
         _ = app.Services.GetRequiredService<EmailEndpointOptions>();

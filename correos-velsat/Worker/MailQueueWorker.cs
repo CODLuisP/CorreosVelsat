@@ -65,18 +65,32 @@ namespace CorreosVelsat.Worker
             }
         }
 
-        internal readonly record struct BatchResult(int Fetched, int Failed);
+        internal readonly record struct BatchResult(int Fetched, int Failed, int Deferred = 0);
+
+        internal enum QueueAction { MarkSent, CountAttempt, LeavePending }
 
         /// <summary>
-        /// Solo se encadena otro lote si este vino completo y sin fallos. Si hubo fallos se espera el intervalo,
-        /// para no gastar los intentos de un correo en segundos (p. ej. durante una caída de Cloudflare).
+        /// Sin cupo en ningún proveedor (RateLimited) el correo queda pendiente sin sumar intentos;
+        /// solo los errores reales (dirección inválida, rechazo, 5xx persistente...) suman un intento.
+        /// </summary>
+        internal static QueueAction Decide(EmailSendResult result) => result switch
+        {
+            { Success: true } => QueueAction.MarkSent,
+            { ErrorKind: EmailErrorKind.RateLimited } => QueueAction.LeavePending,
+            _ => QueueAction.CountAttempt,
+        };
+
+        /// <summary>
+        /// Solo se encadena otro lote si este vino completo, sin fallos y sin pendientes por cupo. Si no, se espera
+        /// el intervalo, para no gastar los intentos de un correo en segundos (p. ej. durante una caída de Cloudflare).
         /// </summary>
         internal static bool ShouldContinueImmediately(BatchResult batch, int batchSize) =>
-            batch.Fetched >= batchSize && batch.Failed == 0;
+            batch.Fetched >= batchSize && batch.Failed == 0 && batch.Deferred == 0;
 
         private async Task<BatchResult> ProcessBatchAsync(string connectionString, int batchSize, int maxRetries, CancellationToken stoppingToken)
         {
             int failed = 0;
+            int deferred = 0;
             using var conn = new MySqlConnection(connectionString);
 
             var correos = (await conn.QueryAsync<ColaCorreo>(
@@ -96,7 +110,8 @@ namespace CorreosVelsat.Worker
                     Html = correo.Cuerpo,
                 }, stoppingToken);
 
-                if (result.Success)
+                var action = Decide(result);
+                if (action == QueueAction.MarkSent)
                 {
                     await conn.ExecuteAsync(
                         @"UPDATE cola_correos
@@ -104,7 +119,7 @@ namespace CorreosVelsat.Worker
                           WHERE id = @Id",
                         new { correo.Id });
                 }
-                else
+                else if (action == QueueAction.CountAttempt)
                 {
                     failed++;
                     await conn.ExecuteAsync(
@@ -113,9 +128,16 @@ namespace CorreosVelsat.Worker
                           WHERE id = @Id",
                         new { correo.Id });
                 }
+                else
+                {
+                    // Sin cupo en ningún proveedor: el resto del lote tampoco saldría. Se reintenta en la próxima pasada.
+                    deferred++;
+                    logger.LogInformation("Correo {Id} queda pendiente: sin cupo en los proveedores. Se reintenta en la próxima pasada.", correo.Id);
+                    break;
+                }
             }
 
-            return new BatchResult(correos.Count, failed);
+            return new BatchResult(correos.Count, failed, deferred);
         }
     }
 

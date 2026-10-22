@@ -10,6 +10,7 @@ namespace CorreosVelsat.Api
     public static class EmailEndpoints
     {
         public const string SendRoute = "/api/email/send";
+        public const string UsageRoute = "/api/email/usage";
 
         // JSON escapado + html y text pueden pesar más que el límite de 5 MiB del mensaje final.
         private const long MaxRequestBodyBytes = 12 * 1024 * 1024;
@@ -25,13 +26,13 @@ namespace CorreosVelsat.Api
                 .WithTags("Email")
                 .WithSummary("Envía un correo personalizado")
                 .WithDescription("""
-                    Envía un correo por Cloudflare Email Sending.
+                    Envía un correo por Cloudflare Email Sending o, al agotarse su cupo diario, por Brevo (SMTP).
 
                     - `from` es opcional. Si no se envía, se usa el remitente por defecto (`Email:DefaultFrom`). Solo se aceptan dominios de `Email:AllowedFromDomains`.
                     - `to`, `cc` y `bcc` aceptan un string o un array de strings. Máximo 50 destinatarios en total.
                     - Se requiere `html` o `text`. Si solo se envía `html`, la versión de texto se genera automáticamente.
                     - Tamaño máximo del mensaje: 5 MiB. Asunto: hasta 998 caracteres.
-                    - Los fallos transitorios de Cloudflare (429, 5xx, timeouts) se reintentan antes de responder 502.
+                    - Si un proveedor responde con límite, 5xx o timeout, se usa el otro. Si ninguno puede, responde 502.
                     """)
                 .Accepts<SendEmailRequest>("application/json")
                 .Produces<SendEmailResponse>(StatusCodes.Status200OK)
@@ -39,6 +40,17 @@ namespace CorreosVelsat.Api
                 .Produces<ErrorResponse>(StatusCodes.Status401Unauthorized)
                 .Produces<ErrorResponse>(StatusCodes.Status429TooManyRequests)
                 .Produces<ErrorResponse>(StatusCodes.Status502BadGateway);
+
+            app.MapGet(UsageRoute, async (RoutingEmailService routing, CancellationToken cancellationToken) =>
+                    Results.Ok(await routing.GetUsageAsync(cancellationToken)))
+                .RequireApiKey()
+                .WithName("GetEmailUsage")
+                .WithTags("Email")
+                .WithSummary("Cupo diario por proveedor")
+                .WithDescription("Destinatarios enviados hoy (día en hora de Lima) por cada proveedor, su límite diario y si está bloqueado temporalmente por límite.")
+                .Produces<EmailUsageReport>(StatusCodes.Status200OK)
+                .Produces<ErrorResponse>(StatusCodes.Status401Unauthorized)
+                .Produces<ErrorResponse>(StatusCodes.Status429TooManyRequests);
             return app;
         }
 

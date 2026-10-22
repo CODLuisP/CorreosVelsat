@@ -9,6 +9,21 @@ namespace CorreosVelsat.Email
         Task<EmailSendResult> SendAsync(EmailMessage message, CancellationToken cancellationToken = default);
     }
 
+    /// <summary>Un proveedor concreto de envío (Cloudflare, Brevo). <see cref="RoutingEmailService"/> elige entre ellos.</summary>
+    public interface IEmailProvider
+    {
+        /// <summary>Nombre del proveedor usado en logs y en el contador diario: "Cloudflare" o "Brevo".</summary>
+        string Name { get; }
+
+        Task<EmailSendResult> SendAsync(EmailMessage message, CancellationToken cancellationToken = default);
+    }
+
+    public static class EmailProviderNames
+    {
+        public const string Cloudflare = "Cloudflare";
+        public const string Brevo = "Brevo";
+    }
+
     public sealed record EmailMessage
     {
         public IReadOnlyList<string> To { get; init; } = [];
@@ -34,7 +49,10 @@ namespace CorreosVelsat.Email
         Authentication,
         /// <summary>Cloudflare rechazó el mensaje (otro 4xx).</summary>
         Rejected,
-        /// <summary>429 persistente tras agotar los reintentos.</summary>
+        /// <summary>
+        /// Límite/cuota del proveedor (Cloudflare 429 / 10004, SMTP con error de límite), o ningún proveedor con cupo.
+        /// No se reintenta: el router pasa al otro proveedor y el worker deja el correo pendiente.
+        /// </summary>
         RateLimited,
         /// <summary>5xx persistente tras agotar los reintentos.</summary>
         ProviderError,
@@ -55,6 +73,12 @@ namespace CorreosVelsat.Email
         public IReadOnlyList<string> PermanentBounces { get; init; } = [];
         public IReadOnlyList<string> SuppressedRecipients { get; init; } = [];
         public int Attempts { get; init; }
+
+        /// <summary>Proveedor que envió (o el último que se intentó).</summary>
+        public string? Provider { get; init; }
+
+        /// <summary>Retry-After indicado por el proveedor en un RateLimited, si lo dio.</summary>
+        public TimeSpan? RetryAfter { get; init; }
 
         public static EmailSendResult Invalid(IReadOnlyList<string> errors) => new()
         {

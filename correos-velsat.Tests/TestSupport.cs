@@ -40,6 +40,30 @@ namespace CorreosVelsat.Tests
         };
     }
 
+    internal sealed class ManualTimeProvider(DateTimeOffset start) : TimeProvider
+    {
+        private DateTimeOffset _now = start;
+        public override DateTimeOffset GetUtcNow() => _now;
+        public void Advance(TimeSpan by) => _now += by;
+        public void Set(DateTimeOffset now) => _now = now;
+    }
+
+    /// <summary>Proveedor falso: responde con <see cref="Respond"/> y cuenta las llamadas.</summary>
+    internal sealed class FakeProvider(string name) : IEmailProvider
+    {
+        public string Name { get; } = name;
+        public int Calls { get; private set; }
+        public Func<EmailMessage, EmailSendResult> Respond { get; set; } = _ => new EmailSendResult { Success = true, MessageId = "id", Attempts = 1 };
+
+        public Task<EmailSendResult> SendAsync(EmailMessage message, CancellationToken cancellationToken = default)
+        {
+            Calls++;
+            return Task.FromResult(Respond(message));
+        }
+
+        public static EmailSendResult Fail(EmailErrorKind kind) => EmailSendResult.Fail(kind, kind.ToString());
+    }
+
     public sealed class FakeEmailService : IEmailService
     {
         public List<EmailMessage> Sent { get; } = [];

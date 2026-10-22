@@ -5,7 +5,33 @@ Servicio en .NET 10 (ASP.NET Core) que:
 - **Procesa la cola `cola_correos`** de MySQL cada `Worker:IntervalSeconds` y envía cada correo pendiente.
 - **Expone `POST /api/email/send`** para enviar correos personalizados.
 
-Todo el envío pasa por `IEmailService` (`CloudflareEmailService`), que usa la **API REST de Cloudflare Email Sending** por HTTPS. No usa SMTP: en el droplet de DigitalOcean los puertos 25, 465 y 587 están bloqueados.
+Todo el envío pasa por `IEmailService` (`RoutingEmailService`), que reparte los correos entre dos proveedores según un cupo diario:
+
+1. **Cloudflare Email Sending** (API REST por HTTPS), mientras esté bajo `Cloudflare__DailyLimit`.
+2. **Brevo por SMTP** (`smtp-relay.brevo.com:2525` con STARTTLS), mientras esté bajo `Smtp__DailyLimit`. Se usa el puerto 2525 porque DigitalOcean bloquea 25, 465 y 587.
+3. Si los dos llegaron a su cupo del día, se intenta **Cloudflare igual**, porque puede tener cupo extra pagado.
+
+## Rotación por cupo diario
+
+- **Contador:** se cuentan **destinatarios** enviados (to + cc + bcc) por proveedor y por día, en hora de **America/Lima**. Se guarda en la tabla `email_provider_usage` de la misma base MySQL, que se crea sola, así que sobrevive a reinicios. Sin `ConnectionStrings__MySql`, el contador queda en memoria.
+- **Límite del proveedor:** si responde con límite o cuota (Cloudflare: HTTP 429 o código `10004`; SMTP: errores de *rate/limit/quota*), queda **bloqueado 15 minutos** (o lo que diga `Retry-After`, si es más) y el mismo correo sale por el otro proveedor, sin gastar reintentos.
+- **5xx, timeout o error de red:** se usa el otro proveedor para ese correo.
+- **Sin ningún proveedor disponible:** el endpoint responde 502 y el worker **deja el correo pendiente sin sumar intentos**. Solo los errores reales (dirección inválida, rechazo permanente…) suman intentos.
+- **Logs:** cada envío registra `Proveedor=Cloudflare` o `Proveedor=Brevo` y los contadores del día.
+- **Mantener viva la clave SMTP:** Brevo desactiva la clave SMTP tras 90 días sin uso. Si `Smtp__KeepAliveTo` está definido y Brevo no envió nada en 25 días, se manda un correo "Prueba mensual respaldo SMTP" a esa dirección. La revisión se hace cada 6 horas y solo con el contador en MySQL.
+- **Estado:** `GET /api/email/usage` (con `X-API-Key`) devuelve los contadores del día, los límites y los bloqueos.
+
+Si el usuario de MySQL no tiene permiso `CREATE`, crea la tabla a mano:
+
+```sql
+CREATE TABLE IF NOT EXISTS email_provider_usage (
+    fecha       DATE        NOT NULL,
+    proveedor   VARCHAR(32) NOT NULL,
+    enviados    INT         NOT NULL DEFAULT 0,
+    actualizado DATETIME    NOT NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
+    PRIMARY KEY (fecha, proveedor)
+);
+```
 
 ## Configuración
 
@@ -18,14 +44,22 @@ Ninguno de los dos se sube a git. Si existen ambos, la variable de entorno gana.
 
 | Variable de entorno | Obligatoria | Default | Descripción |
 |---|---|---|---|
-| `ConnectionStrings__MySql` | si el worker está activo | | Conexión a la base de la cola |
+| `ConnectionStrings__MySql` | si el worker está activo | | Conexión a la base de la cola y del contador diario |
 | `Cloudflare__AccountId` | sí | | ID de la cuenta de Cloudflare |
 | `Cloudflare__ApiToken` | sí | | Token con permiso *Email Sending: Edit* |
+| `Cloudflare__DailyLimit` | | `100` | Destinatarios por día antes de rotar a Brevo |
+| `Smtp__Enabled` | | `false` | Activa Brevo como segundo proveedor |
+| `Smtp__Host` | | `smtp-relay.brevo.com` | Servidor SMTP |
+| `Smtp__Port` | | `2525` | Puerto, con STARTTLS |
+| `Smtp__User` | si SMTP está activo | | Login SMTP de Brevo |
+| `Smtp__Password` | si SMTP está activo | | Clave SMTP de Brevo |
+| `Smtp__DailyLimit` | | `300` | Destinatarios por día por Brevo |
+| `Smtp__KeepAliveTo` | | | Email que recibe la prueba si Brevo lleva 25 días sin enviar |
 | `Email__DefaultFrom` | | `alertas@velsat.pe` | Remitente por defecto (alertas de la cola) |
 | `Email__DefaultFromName` | | `Velsat Alertas` | Nombre del remitente por defecto |
 | `Email__AllowedFromDomains` | | `velsat.pe` | Dominios permitidos en `from`, separados por comas |
 | `Email__TimeoutMs` | | `15000` | Timeout por intento |
-| `Email__MaxRetries` | | `3` | Reintentos solo para 429, 5xx, timeouts y errores de red |
+| `Email__MaxRetries` | | `3` | Reintentos en Cloudflare para 5xx, timeouts y errores de red (un 429 pasa directo a Brevo) |
 | `Api__ApiKey` | sí | | Clave del header `X-API-Key` (mínimo 24 caracteres) |
 | `Api__RateLimitPerMinute` | | `30` | Solicitudes por minuto por IP al endpoint |
 | `Api__RateLimitPerDay` | | `2000` | Tope diario global del endpoint |
@@ -161,6 +195,23 @@ Respuestas:
 `to`, `cc` y `bcc` aceptan un string o un array. Si solo envías `html`, la versión `text` se genera automáticamente.
 
 `GET /health` responde `{ "status": "ok" }`.
+
+`GET /api/email/usage` (con `X-API-Key`) devuelve el cupo del día:
+
+```bash
+curl -H "X-API-Key: TU_API_KEY" https://do.velsat.pe:8443/correos/api/email/usage
+```
+
+```json
+{
+  "date": "2026-10-22",
+  "timeZone": "America/Lima",
+  "providers": [
+    { "name": "Cloudflare", "sent": 100, "dailyLimit": 100, "blocked": false },
+    { "name": "Brevo", "sent": 12, "dailyLimit": 300, "blocked": false }
+  ]
+}
+```
 
 ## Pruebas
 

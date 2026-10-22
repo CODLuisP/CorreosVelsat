@@ -16,6 +16,7 @@ namespace CorreosVelsat.Tests
         public const string ApiKey = "test-api-key-0123456789abcdef";
 
         public FakeEmailService Email { get; } = new();
+        public InMemoryEmailUsageStore UsageStore { get; } = new();
         public int RateLimitPerMinute { get; init; } = 1000;
         public string Environment { get; init; } = "Testing";
         public bool SwaggerEnabled { get; init; } = true;
@@ -40,6 +41,9 @@ namespace CorreosVelsat.Tests
             {
                 services.RemoveAll<IEmailService>();
                 services.AddSingleton<IEmailService>(Email);
+                // Nunca tocar la base real (el appsettings.json local puede tener la conexión de producción).
+                services.RemoveAll<IEmailUsageStore>();
+                services.AddSingleton<IEmailUsageStore>(UsageStore);
             });
         }
     }
@@ -131,6 +135,33 @@ namespace CorreosVelsat.Tests
             string content = await response.Content.ReadAsStringAsync();
             Assert.DoesNotContain("detalle-interno-secreto", content);
             Assert.DoesNotContain("10101", content);
+        }
+
+        [Fact]
+        public async Task Usage_RequiresApiKey()
+        {
+            var response = await CreateClient(apiKey: null).GetAsync("/api/email/usage");
+
+            Assert.Equal(HttpStatusCode.Unauthorized, response.StatusCode);
+        }
+
+        [Fact]
+        public async Task Usage_ReturnsTodaysCountersAndLimits()
+        {
+            var today = LimaTime.Today(TimeProvider.System);
+            await factory.UsageStore.IncrementAsync(today, EmailProviderNames.Cloudflare, 7);
+
+            var response = await CreateClient().GetAsync("/api/email/usage");
+
+            Assert.Equal(HttpStatusCode.OK, response.StatusCode);
+            var json = await response.Content.ReadFromJsonAsync<JsonElement>();
+            Assert.Equal(today.ToString("yyyy-MM-dd"), json.GetProperty("date").GetString());
+            Assert.Equal("America/Lima", json.GetProperty("timeZone").GetString());
+            var cloudflare = json.GetProperty("providers")[0];
+            Assert.Equal("Cloudflare", cloudflare.GetProperty("name").GetString());
+            Assert.True(cloudflare.GetProperty("sent").GetInt32() >= 7);
+            Assert.Equal(100, cloudflare.GetProperty("dailyLimit").GetInt32());
+            Assert.False(cloudflare.GetProperty("blocked").GetBoolean());
         }
     }
 

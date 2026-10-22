@@ -93,24 +93,35 @@ namespace CorreosVelsat.Tests
         }
 
         [Fact]
-        public async Task TooManyRequests_RespectsRetryAfter_ThenSucceeds()
+        public async Task TooManyRequests_IsNotRetried_ReturnsRateLimitedWithRetryAfter()
         {
-            var handler = new FakeHandler((_, call, _) =>
+            var handler = new FakeHandler((_, _, _) =>
             {
-                if (call == 1)
-                {
-                    var throttled = FakeHandler.Json(HttpStatusCode.TooManyRequests, FakeHandler.ErrorJson(10004, "throttled"));
-                    throttled.Headers.RetryAfter = new RetryConditionHeaderValue(TimeSpan.FromSeconds(7));
-                    return Task.FromResult(throttled);
-                }
-                return Task.FromResult(FakeHandler.Json(HttpStatusCode.OK, FakeHandler.SuccessJson));
+                var throttled = FakeHandler.Json(HttpStatusCode.TooManyRequests, FakeHandler.ErrorJson(10004, "email.sending.error.throttled"));
+                throttled.Headers.RetryAfter = new RetryConditionHeaderValue(TimeSpan.FromMinutes(30));
+                return Task.FromResult(throttled);
             });
 
             var result = await CreateService(handler).SendAsync(SimpleMessage());
 
-            Assert.True(result.Success);
-            Assert.Equal(2, result.Attempts);
-            Assert.Equal([TimeSpan.FromSeconds(7)], _delays);
+            // El router pasa al otro proveedor: no se gastan reintentos en Cloudflare.
+            Assert.False(result.Success);
+            Assert.Equal(EmailErrorKind.RateLimited, result.ErrorKind);
+            Assert.Equal(TimeSpan.FromMinutes(30), result.RetryAfter);
+            Assert.Single(handler.Requests);
+            Assert.Empty(_delays);
+        }
+
+        [Fact]
+        public async Task ThrottledErrorCode_IsRateLimited_EvenWithoutHttp429()
+        {
+            var handler = new FakeHandler((_, _, _) =>
+                Task.FromResult(FakeHandler.Json(HttpStatusCode.BadRequest, FakeHandler.ErrorJson(10004, "email.sending.error.throttled"))));
+
+            var result = await CreateService(handler).SendAsync(SimpleMessage());
+
+            Assert.Equal(EmailErrorKind.RateLimited, result.ErrorKind);
+            Assert.Single(handler.Requests);
         }
 
         [Fact]

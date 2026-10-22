@@ -11,14 +11,20 @@ namespace CorreosVelsat.Email
     /// Envío de correos por la API REST de Cloudflare Email Sending (HTTPS, sin SMTP).
     /// https://developers.cloudflare.com/api/resources/email_sending/methods/send
     /// </summary>
-    public sealed class CloudflareEmailService : IEmailService
+    public sealed class CloudflareEmailService : IEmailService, IEmailProvider
     {
         private static readonly JsonSerializerOptions JsonOptions = new(JsonSerializerDefaults.Web)
         {
             DefaultIgnoreCondition = JsonIgnoreCondition.WhenWritingNull,
         };
 
-        private static readonly TimeSpan MaxRetryAfter = TimeSpan.FromSeconds(60);
+        /// <summary>email.sending.error.throttled</summary>
+        private const int ThrottledErrorCode = 10004;
+
+        // Retry-After solo se usa para decidir cuánto bloquear el proveedor (mínimo 15 min en RoutingEmailService).
+        private static readonly TimeSpan MaxRetryAfter = TimeSpan.FromHours(24);
+
+        public string Name => EmailProviderNames.Cloudflare;
 
         private readonly HttpClient _http;
         private readonly EmailOptions _options;
@@ -83,7 +89,7 @@ namespace CorreosVelsat.Email
             for (int attempt = 1; ; attempt++)
             {
                 var (result, transient, retryAfter) = await SendOnceAsync(body, cancellationToken);
-                result = result with { Attempts = attempt };
+                result = result with { Attempts = attempt, Provider = Name };
 
                 if (result.Success || !transient || attempt > _options.MaxRetries)
                     return result;
@@ -127,16 +133,21 @@ namespace CorreosVelsat.Email
 
                 var error = parsed?.Errors?.FirstOrDefault();
                 string message = error is not null ? $"{error.Code}: {error.Message}" : $"HTTP {status}";
-                bool transient = status == (int)HttpStatusCode.TooManyRequests || status >= 500;
-                var kind = status switch
+                // 429 / 10004 (email.sending.error.throttled): no se reintenta aquí; RoutingEmailService
+                // bloquea Cloudflare y pasa a Brevo en el mismo correo.
+                bool throttled = status == (int)HttpStatusCode.TooManyRequests || error?.Code == ThrottledErrorCode;
+                bool transient = !throttled && status >= 500;
+                var kind = throttled ? EmailErrorKind.RateLimited : status switch
                 {
                     401 or 403 => EmailErrorKind.Authentication,
-                    429 => EmailErrorKind.RateLimited,
                     >= 500 => EmailErrorKind.ProviderError,
                     _ => EmailErrorKind.Rejected,
                 };
-                var retryAfter = status == (int)HttpStatusCode.TooManyRequests ? GetRetryAfter(response) : null;
-                return (EmailSendResult.Fail(kind, message, status, error?.Code), transient, retryAfter);
+                var failure = EmailSendResult.Fail(kind, message, status, error?.Code) with
+                {
+                    RetryAfter = throttled ? GetRetryAfter(response) : null,
+                };
+                return (failure, transient, null);
             }
             catch (OperationCanceledException) when (!cancellationToken.IsCancellationRequested)
             {

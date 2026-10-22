@@ -21,6 +21,9 @@ namespace CorreosVelsat.Email
         public TimeSpan RetryBaseDelay { get; init; } = TimeSpan.FromSeconds(1);
         public TimeSpan MaxRetryDelay { get; init; } = TimeSpan.FromSeconds(30);
 
+        /// <summary>Destinatarios por día (hora de Lima) antes de rotar a Brevo.</summary>
+        public int CloudflareDailyLimit { get; init; } = 100;
+
         public static EmailOptions FromConfiguration(IConfiguration config)
         {
             var missing = new List<string>();
@@ -65,7 +68,55 @@ namespace CorreosVelsat.Email
                 AllowedFromDomains = allowedDomains,
                 Timeout = TimeSpan.FromMilliseconds(ConfigInt.Read(config, "Email:TimeoutMs", 15000, min: 1000, max: 120000)),
                 MaxRetries = ConfigInt.Read(config, "Email:MaxRetries", 3, min: 0, max: 10),
+                CloudflareDailyLimit = ConfigInt.Read(config, "Cloudflare:DailyLimit", 100, min: 0, max: 10_000_000),
             };
+        }
+    }
+
+    /// <summary>
+    /// Proveedor SMTP de respaldo (Brevo). Puerto 2525 con STARTTLS: DigitalOcean bloquea 25/465/587.
+    /// </summary>
+    public sealed class SmtpOptions
+    {
+        public bool Enabled { get; init; }
+        public string Host { get; init; } = "smtp-relay.brevo.com";
+        public int Port { get; init; } = 2525;
+        public string User { get; init; } = "";
+        public string Password { get; init; } = "";
+
+        /// <summary>Destinatarios por día (hora de Lima) por SMTP.</summary>
+        public int DailyLimit { get; init; } = 300;
+
+        /// <summary>Si se define, se envía un correo de prueba cuando Brevo lleva 25 días sin enviar (Brevo desactiva la clave a los 90).</summary>
+        public string? KeepAliveTo { get; init; }
+
+        public static SmtpOptions FromConfiguration(IConfiguration config)
+        {
+            bool enabled = config.GetValue("Smtp:Enabled", false);
+            var options = new SmtpOptions
+            {
+                Enabled = enabled,
+                Host = config["Smtp:Host"]?.Trim() is { Length: > 0 } host ? host : "smtp-relay.brevo.com",
+                Port = ConfigInt.Read(config, "Smtp:Port", 2525, min: 1, max: 65535),
+                User = config["Smtp:User"]?.Trim() ?? "",
+                Password = config["Smtp:Password"] ?? "",
+                DailyLimit = ConfigInt.Read(config, "Smtp:DailyLimit", 300, min: 0, max: 10_000_000),
+                KeepAliveTo = config["Smtp:KeepAliveTo"]?.Trim() is { Length: > 0 } to ? to : null,
+            };
+
+            if (!enabled)
+                return options;
+
+            var missing = new List<string>();
+            if (options.User.Length == 0) missing.Add("Smtp:User");
+            if (options.Password.Length == 0) missing.Add("Smtp:Password");
+            if (missing.Count > 0)
+                throw new InvalidOperationException(
+                    $"Smtp:Enabled=true pero faltan valores: {string.Join(", ", missing.Select(ConfigInt.EnvName))}");
+            if (options.KeepAliveTo is not null && !EmailValidator.IsValidAddress(options.KeepAliveTo))
+                throw new InvalidOperationException($"Smtp:KeepAliveTo no es un email válido: {options.KeepAliveTo}");
+
+            return options;
         }
     }
 
