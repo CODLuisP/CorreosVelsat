@@ -213,7 +213,7 @@ namespace CorreosVelsat.Email
                 payload["text"] = message.Text;
             if (message.Attachments.Count > 0)
                 payload["attachments"] = message.Attachments
-                    .Select(a => new CloudflareAttachment(Convert.ToBase64String(a.Content), a.FileName, a.ContentType))
+                    .Select(a => new CloudflareAttachment(Convert.ToBase64String(a.Content), a.FileName, a.ContentType, "attachment"))
                     .ToArray();
             return payload;
         }
@@ -250,7 +250,8 @@ namespace CorreosVelsat.Email
         private sealed record CloudflareAttachment(
             [property: JsonPropertyName("content")] string Content,
             [property: JsonPropertyName("filename")] string FileName,
-            [property: JsonPropertyName("type")] string Type);
+            [property: JsonPropertyName("type")] string Type,
+            [property: JsonPropertyName("disposition")] string Disposition);
 
         private sealed class CloudflareResponse
         {

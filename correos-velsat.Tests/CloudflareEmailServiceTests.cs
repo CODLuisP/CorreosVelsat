@@ -247,6 +247,7 @@ namespace CorreosVelsat.Tests
             Assert.Equal(Convert.ToBase64String(pdfBytes), attachment.GetProperty("content").GetString());
             Assert.Equal("factura.pdf", attachment.GetProperty("filename").GetString());
             Assert.Equal("application/pdf", attachment.GetProperty("type").GetString());
+            Assert.Equal("attachment", attachment.GetProperty("disposition").GetString());
         }
 
         [Fact]
