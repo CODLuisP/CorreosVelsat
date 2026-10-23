@@ -178,7 +178,10 @@ curl -X POST http://localhost:5000/api/email/send \
     "to": ["cliente@gmail.com"],
     "replyTo": "soporte@velsat.pe",
     "subject": "Cotización",
-    "html": "<p>Hola, adjuntamos la información.</p>"
+    "html": "<p>Hola, adjuntamos la información.</p>",
+    "attachments": [
+      { "fileName": "cotizacion.pdf", "contentType": "application/pdf", "content": "BASE64..." }
+    ]
   }'
 ```
 
@@ -187,12 +190,14 @@ Respuestas:
 | Código | Cuándo | Cuerpo |
 |---|---|---|
 | 200 | Enviado | `{ "success": true, "messageId": "..." }` |
-| 400 | Validación (email inválido, `from` de otro dominio, sin `subject`, sin `html`/`text`, más de 50 destinatarios, más de 5 MiB) | `{ "success": false, "error": "...", "details": [...] }` |
+| 400 | Validación (email inválido, `from` de otro dominio, sin `subject`, sin `html`/`text`, más de 50 destinatarios, más de 10 adjuntos, adjunto con base64/campos inválidos, más de 5 MiB) | `{ "success": false, "error": "...", "details": [...] }` |
 | 401 | Falta `X-API-Key` o es incorrecta | |
 | 429 | Rate limit | |
 | 502 | Cloudflare falló tras los reintentos | |
 
 `to`, `cc` y `bcc` aceptan un string o un array. Si solo envías `html`, la versión `text` se genera automáticamente.
+
+`attachments` es opcional: hasta 10 archivos, cada uno con `fileName`, `contentType` (MIME, p. ej. `application/pdf`) y `content` (el archivo en base64). El tamaño total del mensaje (asunto + html + text + adjuntos) no puede superar 5 MiB.
 
 `GET /health` responde `{ "status": "ok" }`.
 

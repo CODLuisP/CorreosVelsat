@@ -95,9 +95,23 @@ namespace CorreosVelsat.Email
             if (message.Html is null && message.Text is null)
                 errors.Add("Se requiere 'html' o 'text' (al menos uno).");
 
+            if (message.Attachments.Count > EmailOptions.MaxAttachments)
+                errors.Add($"Máximo {EmailOptions.MaxAttachments} adjuntos; se recibieron {message.Attachments.Count}.");
+
+            foreach (var attachment in message.Attachments)
+            {
+                if (string.IsNullOrWhiteSpace(attachment.FileName) || attachment.FileName.Length > EmailOptions.MaxFileNameLength || HasLineBreak(attachment.FileName))
+                    errors.Add($"El adjunto '{attachment.FileName}' tiene un nombre de archivo inválido (vacío, con saltos de línea o mayor a {EmailOptions.MaxFileNameLength} caracteres).");
+                if (string.IsNullOrWhiteSpace(attachment.ContentType) || HasLineBreak(attachment.ContentType))
+                    errors.Add($"El adjunto '{attachment.FileName}' tiene un contentType inválido.");
+                if (attachment.Content.Length == 0)
+                    errors.Add($"El adjunto '{attachment.FileName}' está vacío.");
+            }
+
             long size = Encoding.UTF8.GetByteCount(message.Subject ?? "")
                 + Encoding.UTF8.GetByteCount(message.Html ?? "")
-                + Encoding.UTF8.GetByteCount(message.Text ?? "");
+                + Encoding.UTF8.GetByteCount(message.Text ?? "")
+                + message.Attachments.Sum(a => (long)a.Content.Length);
             if (size > EmailOptions.MaxMessageBytes)
                 errors.Add($"El mensaje supera el tamaño máximo de {EmailOptions.MaxMessageBytes / (1024 * 1024)} MiB.");
 

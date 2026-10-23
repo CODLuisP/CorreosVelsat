@@ -230,6 +230,37 @@ namespace CorreosVelsat.Tests
         }
 
         [Fact]
+        public async Task Attachments_AreSentAsBase64_WithFileNameAndType()
+        {
+            var handler = new FakeHandler((_, _, _) => Task.FromResult(FakeHandler.Json(HttpStatusCode.OK, FakeHandler.SuccessJson)));
+            byte[] pdfBytes = [1, 2, 3, 4];
+            var message = SimpleMessage() with
+            {
+                Attachments = [new EmailAttachment { FileName = "factura.pdf", ContentType = "application/pdf", Content = pdfBytes }],
+            };
+
+            var result = await CreateService(handler).SendAsync(message);
+
+            Assert.True(result.Success);
+            using var json = JsonDocument.Parse(handler.Requests[0].Body);
+            var attachment = json.RootElement.GetProperty("attachments")[0];
+            Assert.Equal(Convert.ToBase64String(pdfBytes), attachment.GetProperty("content").GetString());
+            Assert.Equal("factura.pdf", attachment.GetProperty("filename").GetString());
+            Assert.Equal("application/pdf", attachment.GetProperty("type").GetString());
+        }
+
+        [Fact]
+        public async Task NoAttachments_OmitsAttachmentsField()
+        {
+            var handler = new FakeHandler((_, _, _) => Task.FromResult(FakeHandler.Json(HttpStatusCode.OK, FakeHandler.SuccessJson)));
+
+            await CreateService(handler).SendAsync(SimpleMessage());
+
+            using var json = JsonDocument.Parse(handler.Requests[0].Body);
+            Assert.False(json.RootElement.TryGetProperty("attachments", out _));
+        }
+
+        [Fact]
         public void HtmlToText_ProducesReadableText()
         {
             string text = HtmlToText.Convert(

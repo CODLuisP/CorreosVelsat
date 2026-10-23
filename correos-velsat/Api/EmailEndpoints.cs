@@ -31,7 +31,8 @@ namespace CorreosVelsat.Api
                     - `from` es opcional. Si no se envía, se usa el remitente por defecto (`Email:DefaultFrom`). Solo se aceptan dominios de `Email:AllowedFromDomains`.
                     - `to`, `cc` y `bcc` aceptan un string o un array de strings. Máximo 50 destinatarios en total.
                     - Se requiere `html` o `text`. Si solo se envía `html`, la versión de texto se genera automáticamente.
-                    - Tamaño máximo del mensaje: 5 MiB. Asunto: hasta 998 caracteres.
+                    - `attachments` es opcional: hasta 10 archivos, cada uno con `fileName`, `contentType` y `content` (base64).
+                    - Tamaño máximo del mensaje: 5 MiB (incluye html + text + adjuntos). Asunto: hasta 998 caracteres.
                     - Si un proveedor responde con límite, 5xx o timeout, se usa el otro. Si ninguno puede, responde 502.
                     """)
                 .Accepts<SendEmailRequest>("application/json")
@@ -76,10 +77,10 @@ namespace CorreosVelsat.Api
             if (request is null)
                 return BadRequest(["El cuerpo de la solicitud está vacío."]);
 
-            var message = request.ToMessage();
+            var message = request.ToMessage(out var attachmentErrors);
             var errors = EmailValidator.Validate(EmailValidator.ApplyDefaults(message, options), options);
-            if (errors.Count > 0)
-                return BadRequest(errors);
+            if (attachmentErrors.Count > 0 || errors.Count > 0)
+                return BadRequest([.. attachmentErrors, .. errors]);
 
             var result = await emailService.SendAsync(message, cancellationToken);
             if (result.Success)
@@ -153,18 +154,69 @@ namespace CorreosVelsat.Api
         /// <example>Hola, adjuntamos la información solicitada.</example>
         public string? Text { get; set; }
 
-        public EmailMessage ToMessage() => new()
+        /// <summary>Adjuntos (PDF, XML, etc.). Opcional. El tamaño total del mensaje (html + text + adjuntos) no puede superar 5 MiB.</summary>
+        public List<AttachmentDto>? Attachments { get; set; }
+
+        /// <summary>
+        /// Decodifica los adjuntos en base64. Los que tengan algún campo vacío o un base64 inválido
+        /// se devuelven como errores en <paramref name="errors"/> en lugar de incluirse en el mensaje.
+        /// </summary>
+        public EmailMessage ToMessage(out IReadOnlyList<string> errors)
         {
-            From = From,
-            FromName = FromName,
-            To = To ?? [],
-            Cc = Cc ?? [],
-            Bcc = Bcc ?? [],
-            ReplyTo = ReplyTo,
-            Subject = Subject ?? "",
-            Html = Html,
-            Text = Text,
-        };
+            var attachments = new List<EmailAttachment>();
+            var attachmentErrors = new List<string>();
+            var dtos = Attachments ?? [];
+            for (int i = 0; i < dtos.Count; i++)
+            {
+                var dto = dtos[i];
+                if (string.IsNullOrWhiteSpace(dto.FileName) || string.IsNullOrWhiteSpace(dto.ContentType) || string.IsNullOrWhiteSpace(dto.Content))
+                {
+                    attachmentErrors.Add($"El adjunto #{i + 1} requiere fileName, contentType y content.");
+                    continue;
+                }
+                byte[] bytes;
+                try
+                {
+                    bytes = Convert.FromBase64String(dto.Content);
+                }
+                catch (FormatException)
+                {
+                    attachmentErrors.Add($"El adjunto #{i + 1} ('{dto.FileName}') no tiene un contenido base64 válido.");
+                    continue;
+                }
+                attachments.Add(new EmailAttachment { FileName = dto.FileName.Trim(), ContentType = dto.ContentType.Trim(), Content = bytes });
+            }
+
+            errors = attachmentErrors;
+            return new EmailMessage
+            {
+                From = From,
+                FromName = FromName,
+                To = To ?? [],
+                Cc = Cc ?? [],
+                Bcc = Bcc ?? [],
+                ReplyTo = ReplyTo,
+                Subject = Subject ?? "",
+                Html = Html,
+                Text = Text,
+                Attachments = attachments,
+            };
+        }
+    }
+
+    /// <summary>Adjunto enviado en base64.</summary>
+    public sealed class AttachmentDto
+    {
+        /// <summary>Nombre del archivo. Obligatorio.</summary>
+        /// <example>factura-F001-123.pdf</example>
+        public string? FileName { get; set; }
+
+        /// <summary>Tipo MIME. Obligatorio.</summary>
+        /// <example>application/pdf</example>
+        public string? ContentType { get; set; }
+
+        /// <summary>Contenido del archivo en base64. Obligatorio.</summary>
+        public string? Content { get; set; }
     }
 
     /// <summary>Acepta "a@x.com" o ["a@x.com", "b@x.com"].</summary>

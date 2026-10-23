@@ -10,6 +10,8 @@ namespace CorreosVelsat.Email
         public const int MaxRecipients = 50;
         public const int MaxSubjectLength = 998;
         public const long MaxMessageBytes = 5 * 1024 * 1024;
+        public const int MaxAttachments = 10;
+        public const int MaxFileNameLength = 255;
 
         public required string AccountId { get; init; }
         public required string ApiToken { get; init; }

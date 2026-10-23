@@ -91,7 +91,10 @@ namespace CorreosVelsat.Email
             if (message.ReplyTo is not null)
                 mime.ReplyTo.Add(MailboxAddress.Parse(message.ReplyTo));
             mime.Subject = message.Subject;
-            mime.Body = new BodyBuilder { HtmlBody = message.Html, TextBody = message.Text }.ToMessageBody();
+            var builder = new BodyBuilder { HtmlBody = message.Html, TextBody = message.Text };
+            foreach (var attachment in message.Attachments)
+                builder.Attachments.Add(attachment.FileName, attachment.Content, ContentType.Parse(attachment.ContentType));
+            mime.Body = builder.ToMessageBody();
             return mime;
         }
 

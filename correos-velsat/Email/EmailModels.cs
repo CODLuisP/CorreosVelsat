@@ -39,6 +39,19 @@ namespace CorreosVelsat.Email
         /// <summary>Al menos uno de Html o Text. Si solo viene Html se genera Text automáticamente.</summary>
         public string? Html { get; init; }
         public string? Text { get; init; }
+
+        public IReadOnlyList<EmailAttachment> Attachments { get; init; } = [];
+    }
+
+    /// <summary>Adjunto en bytes ya decodificados (el endpoint los recibe en base64).</summary>
+    public sealed record EmailAttachment
+    {
+        public required string FileName { get; init; }
+
+        /// <summary>MIME type, p. ej. "application/pdf" o "application/xml".</summary>
+        public required string ContentType { get; init; }
+
+        public required byte[] Content { get; init; }
     }
 
     public enum EmailErrorKind

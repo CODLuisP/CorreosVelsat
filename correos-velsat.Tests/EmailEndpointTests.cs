@@ -125,6 +125,59 @@ namespace CorreosVelsat.Tests
         }
 
         [Fact]
+        public async Task ValidRequest_WithAttachments_DecodesBase64()
+        {
+            factory.Email.NextResult = new EmailSendResult { Success = true, MessageId = "msg-abc", Attempts = 1 };
+            factory.Email.Sent.Clear();
+            byte[] pdfBytes = [1, 2, 3, 4];
+            string body = $$"""
+                { "to": "cliente@gmail.com", "subject": "Factura", "html": "<p>Hola</p>",
+                  "attachments": [{ "fileName": "factura.pdf", "contentType": "application/pdf", "content": "{{Convert.ToBase64String(pdfBytes)}}" }] }
+                """;
+
+            var response = await CreateClient().PostAsync(Route, JsonBody(body));
+
+            Assert.Equal(HttpStatusCode.OK, response.StatusCode);
+            var sent = Assert.Single(factory.Email.Sent);
+            var attachment = Assert.Single(sent.Attachments);
+            Assert.Equal("factura.pdf", attachment.FileName);
+            Assert.Equal("application/pdf", attachment.ContentType);
+            Assert.Equal(pdfBytes, attachment.Content);
+        }
+
+        [Theory]
+        [InlineData("""{ "to": "a@gmail.com", "subject": "x", "text": "x", "attachments": [{ "fileName": "a.pdf", "contentType": "application/pdf", "content": "no-es-base64!!" }] }""", "base64 válido")]
+        [InlineData("""{ "to": "a@gmail.com", "subject": "x", "text": "x", "attachments": [{ "contentType": "application/pdf", "content": "AAAA" }] }""", "requiere fileName")]
+        public async Task InvalidAttachments_Return400(string body, string expectedError)
+        {
+            factory.Email.Sent.Clear();
+
+            var response = await CreateClient().PostAsync(Route, JsonBody(body));
+
+            Assert.Equal(HttpStatusCode.BadRequest, response.StatusCode);
+            string content = await response.Content.ReadAsStringAsync();
+            Assert.Contains(expectedError, content);
+            Assert.Empty(factory.Email.Sent);
+        }
+
+        [Fact]
+        public async Task TooManyAttachments_Returns400()
+        {
+            factory.Email.Sent.Clear();
+            string attachment = """{ "fileName": "a.pdf", "contentType": "application/pdf", "content": "AAAA" }""";
+            string body = $$"""
+                { "to": "a@gmail.com", "subject": "x", "text": "x",
+                  "attachments": [{{string.Join(",", Enumerable.Repeat(attachment, 11))}}] }
+                """;
+
+            var response = await CreateClient().PostAsync(Route, JsonBody(body));
+
+            Assert.Equal(HttpStatusCode.BadRequest, response.StatusCode);
+            string content = await response.Content.ReadAsStringAsync();
+            Assert.Contains("Máximo 10 adjuntos", content);
+        }
+
+        [Fact]
         public async Task ProviderFailure_Returns502_WithoutInternalDetails()
         {
             factory.Email.NextResult = EmailSendResult.Fail(EmailErrorKind.Authentication, "10101: detalle-interno-secreto", 401, 10101);

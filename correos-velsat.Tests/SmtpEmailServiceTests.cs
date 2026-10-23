@@ -54,6 +54,30 @@ namespace CorreosVelsat.Tests
         }
 
         [Fact]
+        public void BuildMimeMessage_IncludesAttachments()
+        {
+            byte[] pdfBytes = [1, 2, 3, 4];
+            var resolved = EmailValidator.ApplyDefaults(new EmailMessage
+            {
+                To = ["a@gmail.com"],
+                Subject = "Factura",
+                Html = "<p>Hola</p>",
+                Attachments = [new EmailAttachment { FileName = "factura.pdf", ContentType = "application/pdf", Content = pdfBytes }],
+            }, TestOptions.Create());
+
+            var mime = SmtpEmailService.BuildMimeMessage(resolved);
+
+            var attachment = Assert.Single(mime.Attachments);
+            var part = Assert.IsType<MimeKit.MimePart>(attachment);
+            Assert.Equal("factura.pdf", part.FileName);
+            Assert.Equal("application/pdf", part.ContentType.MimeType);
+            using var ms = new MemoryStream();
+            Assert.NotNull(part.Content);
+            part.Content.DecodeTo(ms);
+            Assert.Equal(pdfBytes, ms.ToArray());
+        }
+
+        [Fact]
         public void SmtpOptions_Defaults_AndRequiredCredentialsWhenEnabled()
         {
             var disabled = SmtpOptions.FromConfiguration(new ConfigurationBuilder().Build());
